@@ -162,17 +162,18 @@ export default function AdminDashboard() {
     try {
       const [postsRes, inquiriesRes] = await Promise.all([
         api.get('/api/blog'),
-        api.get('/api/inquiry'),
+        // api.get('/api/inquiry'),
       ])
 
       if (postsRes.data?.success) {
         const mapped = (postsRes.data.data?.posts || []).map(mapPost)
+        console.log(mapped,"mapped")
         setBlogPosts(mapped)
       }
-      if (inquiriesRes.data?.success) {
-        const mapped = (inquiriesRes.data.data?.inquiries || []).map(mapInquiry)
-        setInquiries(mapped)
-      }
+      // if (inquiriesRes.data?.success) {
+      //   const mapped = (inquiriesRes.data.data?.inquiries || []).map(mapInquiry)
+      //   setInquiries(mapped)
+      // }
     } catch (error) {
       console.error('Error fetching data:', error)
       toast({
