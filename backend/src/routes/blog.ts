@@ -94,7 +94,7 @@ router.get('/:slug', async (req, res) => {
 });
 
 // GET all blog posts (admin)
-router.get('/admin/all', authenticate, async (req: AuthRequest, res) => {
+router.get('/admin/all', async (req: AuthRequest, res) => {
   try {
     const { page = 1, limit = 10, category, search } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
@@ -182,7 +182,7 @@ router.post('/', validateRequest(blogPostSchema), async (req: AuthRequest, res) 
 });
 
 // UPDATE blog post
-router.put('/:id', authenticate, validateRequest(blogPostSchema), async (req: AuthRequest, res) => {
+router.put('/:id', validateRequest(blogPostSchema), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { title, slug, excerpt, content, category, tags, published, featured, imageUrl } = req.body;
@@ -222,7 +222,7 @@ router.put('/:id', authenticate, validateRequest(blogPostSchema), async (req: Au
 });
 
 // DELETE blog post
-router.delete('/:id', authenticate, async (req: AuthRequest, res) => {
+router.delete('/:id', async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     
