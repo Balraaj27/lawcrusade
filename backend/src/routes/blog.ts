@@ -153,15 +153,15 @@ router.get('/admin/all', authenticate, async (req: AuthRequest, res) => {
 // authenticate
 router.post('/', validateRequest(blogPostSchema), async (req: AuthRequest, res) => {
   try {
-    const { title, slug, excerpt, content, category, tags, published, featured, imageUrl } = req.body;
+    const { title, slug, excerpt, content, category, tags = [], published, featured, imageUrl } = req.body;
     const id = uuidv4();
-    
+
     const result = await query(`
       INSERT INTO blog_posts (id, title, slug, excerpt, content, category, tags, published, featured, image_url)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9, $10)
       RETURNING *
     `, [id, title, slug, excerpt, content, category, tags, published || false, featured || false, imageUrl]);
-    
+
     return res.status(201).json({
       success: true,
       message: 'Blog post created successfully',

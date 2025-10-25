@@ -6,10 +6,10 @@ export const blogPostSchema = Joi.object({
   excerpt: Joi.string().max(500).optional(),
   content: Joi.string().min(1).required(),
   category: Joi.string().min(1).max(100).required(),
-  tags: Joi.string().max(200).optional(),
+  tags: Joi.array().items(Joi.string().max(100)).optional(), // ✅ Updated
   published: Joi.boolean().optional(),
   featured: Joi.boolean().optional(),
-  imageUrl: Joi.string().uri().optional()
+  imageUrl: Joi.string().uri().allow('').optional()
 });
 
 export const loginSchema = Joi.object({
