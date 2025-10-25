@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import axios from 'axios'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,17 +13,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { 
   FileText, 
-  Users, 
   MessageSquare, 
-  Settings, 
   LogOut, 
   Plus, 
   Edit, 
   Trash2, 
   Eye,
   Search,
-  Filter,
-  Calendar,
   Clock
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
@@ -50,9 +47,82 @@ interface Inquiry {
   subject: string
   message: string
   service: string
-  status: string
+  status: string // UI uses: 'pending' | 'in-progress' | 'resolved'
   createdAt: string
   updatedAt: string
+}
+
+const API = process.env.NEXT_PUBLIC_API_URL
+
+// axios client
+const api = axios.create({
+  baseURL: API,
+})
+
+// ---- helpers (invisible to UI) ----
+// blog: map snake_case rows -> camelCase expected by UI
+function mapPost(row: any): BlogPost {
+  return {
+    id: row.id,
+    title: row.title,
+    slug: row.slug,
+    excerpt: row.excerpt ?? '',
+    content: row.content ?? '',
+    category: row.category ?? 'criminal-law',
+    // backend column is TEXT[]; UI expects comma string
+    tags: Array.isArray(row.tags) ? row.tags.join(',') : (row.tags ?? ''),
+    published: !!row.published,
+    featured: !!row.featured,
+    imageUrl: row.image_url ?? row.imageUrl ?? '',
+    createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString(),
+    updatedAt: row.updated_at ?? row.updatedAt ?? new Date().toISOString(),
+  }
+}
+
+// convert UI post -> backend payload
+function toPostPayload(p: any) {
+  const tagsArr =
+    typeof p.tags === 'string'
+      ? p.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
+      : Array.isArray(p.tags)
+      ? p.tags
+      : []
+  return {
+    title: p.title,
+    slug: p.slug,
+    excerpt: p.excerpt ?? '',
+    content: p.content,
+    category: p.category ?? 'criminal-law',
+    tags: tagsArr, // backend expects TEXT[]
+    published: !!p.published,
+    featured: !!p.featured,
+    imageUrl: p.imageUrl ?? '',
+  }
+}
+
+// inquiry: map snake_case rows -> camelCase and normalize status name
+function mapInquiry(row: any): Inquiry {
+  const rawStatus: string = row.status
+  // backend uses: 'pending' | 'in-progress' | 'completed'
+  // UI shows:     'pending' | 'in-progress' | 'resolved'
+  const uiStatus = rawStatus === 'completed' ? 'resolved' : rawStatus
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email ?? '',
+    phone: row.phone ?? '',
+    subject: row.subject ?? '',
+    message: row.message ?? '',
+    service: row.service ?? '',
+    status: uiStatus,
+    createdAt: row.created_at ?? new Date().toISOString(),
+    updatedAt: row.updated_at ?? new Date().toISOString(),
+  }
+}
+
+// when sending status to backend, map UI 'resolved' -> 'completed'
+function toApiStatus(uiStatus: string) {
+  return uiStatus === 'resolved' ? 'completed' : uiStatus
 }
 
 export default function AdminDashboard() {
@@ -84,42 +154,24 @@ export default function AdminDashboard() {
   const [uploadingImage, setUploadingImage] = useState(false)
 
   useEffect(() => {
-    // Check authentication
-    const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/admin/login')
-      return
-    }
-    
-    // Fetch real data
+    // No token logic as requested
     fetchData()
-  }, [router])
+  }, [])
 
   const fetchData = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      }
-      
-      const [postsResponse, inquiriesResponse] = await Promise.all([
-        fetch('/api/admin/blog-posts', { headers }),
-        fetch('/api/admin/inquiries', { headers })
+      const [postsRes, inquiriesRes] = await Promise.all([
+        api.get('/api/blog'),
+        api.get('/api/inquiry'),
       ])
-      
-      if (postsResponse.ok) {
-        const postsData = await postsResponse.json()
-        if (postsData.success) {
-          setBlogPosts(postsData.data.posts)
-        }
+
+      if (postsRes.data?.success) {
+        const mapped = (postsRes.data.data?.posts || []).map(mapPost)
+        setBlogPosts(mapped)
       }
-      
-      if (inquiriesResponse.ok) {
-        const inquiriesData = await inquiriesResponse.json()
-        if (inquiriesData.success) {
-          setInquiries(inquiriesData.data.inquiries)
-        }
+      if (inquiriesRes.data?.success) {
+        const mapped = (inquiriesRes.data.data?.inquiries || []).map(mapInquiry)
+        setInquiries(mapped)
       }
     } catch (error) {
       console.error('Error fetching data:', error)
@@ -146,20 +198,20 @@ export default function AdminDashboard() {
   const handleImageUpload = async (file: File) => {
     setUploadingImage(true)
     try {
-      const formData = new FormData()
-      formData.append('image', file)
+      const form = new FormData()
+      form.append('image', file)
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/upload/image`, {
-        method: 'POST',
-        body: formData,
+      const res = await api.post('/api/upload/image', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        return data.data.url
-      } else {
-        throw new Error('Failed to upload image')
+      if (res.data?.success) {
+        const relativeUrl: string = res.data.data?.url // e.g. /uploads/filename.jpg
+        // make it absolute to ensure image shows in admin
+        const fullUrl = `${API}${relativeUrl}`
+        return fullUrl
       }
+      throw new Error(res.data?.message || 'Failed to upload image')
     } catch (error) {
       toast({
         title: "Upload Error",
@@ -197,33 +249,18 @@ export default function AdminDashboard() {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '')
 
-    const postData = {
-      title: newPost.title,
-      slug,
-      excerpt: newPost.excerpt || '',
-      content: newPost.content,
-      category: newPost.category || 'criminal-law',
-      tags: newPost.tags || '',
-      published: newPost.published || false,
-      featured: newPost.featured || false,
-      imageUrl: newPost.imageUrl || ''
-    }
+    const payload = toPostPayload({
+      ...newPost,
+      slug
+    })
 
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch('/api/admin/blog-posts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(postData),
-      })
-
-      const data = await response.json()
+      const res = await api.post('/api/blog', payload)
+      const data = res.data
 
       if (data.success) {
-        setBlogPosts([data.data, ...blogPosts])
+        const added = mapPost(data.data)
+        setBlogPosts(prev => [added, ...prev])
         setNewPost({
           title: '',
           excerpt: '',
@@ -237,8 +274,9 @@ export default function AdminDashboard() {
         
         toast({
           title: "Post created successfully",
-          description: `Your blog post "${data.data.title}" has been created.`,
+          description: `Your blog post "${added.title}" has been created.`,
         })
+        setActiveTab('blog')
       } else {
         throw new Error(data.message || 'Failed to create post')
       }
@@ -246,7 +284,7 @@ export default function AdminDashboard() {
       console.error('Create post error:', error)
       toast({
         title: "Error",
-        description: error.message || "Failed to create blog post. Please try again.",
+        description: error.response?.data?.message || error.message || "Failed to create blog post. Please try again.",
         variant: "destructive",
       })
     }
@@ -262,28 +300,15 @@ export default function AdminDashboard() {
       return
     }
 
-    // Ensure category is set
-    const postData = {
-      ...editingPost,
-      category: editingPost.category || 'criminal-law',
-      excerpt: editingPost.excerpt || '',
-      tags: editingPost.tags || '',
-    }
+    const payload = toPostPayload(editingPost)
 
     try {
-      const response = await fetch(`/api/admin/blog-posts/${editingPost.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(postData),
-      })
+      const res = await api.put(`/api/blog/${editingPost.id}`, payload)
+      const data = res.data
 
-      if (response.ok) {
-        const updatedPost = await response.json()
-        setBlogPosts(blogPosts.map(post => 
-          post.id === updatedPost.id ? updatedPost : post
-        ))
+      if (data.success) {
+        const updated = mapPost(data.data)
+        setBlogPosts(prev => prev.map(p => (p.id === updated.id ? updated : p)))
         setEditingPost(null)
         
         toast({
@@ -291,84 +316,82 @@ export default function AdminDashboard() {
           description: "Your blog post has been updated.",
         })
       } else {
-        throw new Error('Failed to update post')
+        throw new Error(data.message || 'Failed to update post')
       }
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to update blog post",
+        description: error.response?.data?.message || error.message || "Failed to update blog post",
         variant: "destructive",
       })
     }
   }
 
   const handleDeletePost = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this post?')) {
-      return
-    }
+    if (!confirm('Are you sure you want to delete this post?')) return
 
     try {
-      const response = await fetch(`/api/admin/blog-posts/${id}`, {
-        method: 'DELETE',
-      })
+      const res = await api.delete(`/api/blog/${id}`)
+      const data = res.data
 
-      if (response.ok) {
-        setBlogPosts(blogPosts.filter(post => post.id !== id))
+      if (data.success) {
+        setBlogPosts(prev => prev.filter(post => post.id !== id))
         toast({
           title: "Post deleted",
           description: "The blog post has been deleted.",
         })
       } else {
-        throw new Error('Failed to delete post')
+        throw new Error(data.message || 'Failed to delete post')
       }
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to delete blog post",
+        description: error.response?.data?.message || error.message || "Failed to delete blog post",
         variant: "destructive",
       })
     }
   }
 
-  const handleUpdateInquiryStatus = async (id: string, status: string) => {
+  const handleUpdateInquiryStatus = async (id: string, newStatusUI: string) => {
     try {
-      const response = await fetch(`/api/admin/inquiries/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ status }),
-      })
+      const statusForApi = toApiStatus(newStatusUI)
+      const res = await api.patch(`/api/inquiry/${id}/status`, { status: statusForApi })
+      const data = res.data
 
-      if (response.ok) {
-        setInquiries(inquiries.map(inquiry => 
-          inquiry.id === id 
-            ? { ...inquiry, status, updatedAt: new Date().toISOString() }
-            : inquiry
-        ))
+      if (data.success) {
+        setInquiries(prev => 
+          prev.map(inq => 
+            inq.id === id 
+              ? { ...inq, status: newStatusUI, updatedAt: new Date().toISOString() }
+              : inq
+          )
+        )
         toast({
           title: "Status updated",
-          description: `Inquiry status changed to ${status}.`,
+          description: `Inquiry status changed to ${newStatusUI}.`,
         })
       } else {
-        throw new Error('Failed to update status')
+        throw new Error(data.message || 'Failed to update status')
       }
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to update inquiry status",
+        description: error.response?.data?.message || error.message || "Failed to update inquiry status",
         variant: "destructive",
       })
     }
   }
 
-  const filteredInquiries = inquiries.filter(inquiry => {
-    const matchesSearch = inquiry.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         inquiry.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         inquiry.subject.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || inquiry.status === statusFilter
-    return matchesSearch && matchesStatus
-  })
+  const filteredInquiries = useMemo(() => {
+    return inquiries.filter(inquiry => {
+      const matchesSearch =
+        inquiry.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        inquiry.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        inquiry.subject.toLowerCase().includes(searchTerm.toLowerCase())
+      const matchesStatus = statusFilter === 'all' || inquiry.status === statusFilter
+      return matchesSearch && matchesStatus
+    })
+  }, [inquiries, searchTerm, statusFilter])
 
   const stats = {
     totalPosts: blogPosts.length,
@@ -396,7 +419,6 @@ export default function AdminDashboard() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
               <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-              <Badge variant="secondary">Law Crusade</Badge>
             </div>
             <div className="flex items-center space-x-4">
               <Button 
@@ -408,7 +430,7 @@ export default function AdminDashboard() {
                 {isRefreshing ? 'Refreshing...' : 'Refresh'}
               </Button>
               <span className="text-sm text-gray-600">
-                {localStorage.getItem('adminEmail')}
+                {typeof window !== 'undefined' ? localStorage.getItem('adminEmail') : ''}
               </span>
               <Button variant="outline" size="sm" onClick={handleLogout}>
                 <LogOut className="h-4 w-4 mr-2" />
@@ -685,12 +707,11 @@ export default function AdminDashboard() {
                                     />
                                     <span className="font-medium">Featured</span>
                                   </label>
-                                  {editingPost.published && (
+                                  {editingPost.published ? (
                                     <Badge variant="default" className="bg-green-100 text-green-800">
                                       Published
                                     </Badge>
-                                  )}
-                                  {!editingPost.published && (
+                                  ) : (
                                     <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
                                       Draft
                                     </Badge>
@@ -829,24 +850,23 @@ export default function AdminDashboard() {
                         />
                         <span className="font-medium">Featured</span>
                       </label>
-                      {newPost.published && (
+                      {newPost.published ? (
                         <Badge variant="default" className="bg-green-100 text-green-800">
                           Will be published immediately
                         </Badge>
-                      )}
-                      {!newPost.published && (
+                      ) : (
                         <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
                           Will be saved as draft
                         </Badge>
                       )}
                     </div>
                     <Button 
-                    onClick={handleCreatePost} 
-                    className="w-full"
-                    variant={newPost.published ? "default" : "secondary"}
-                  >
-                    {newPost.published ? "Publish Post" : "Save as Draft"}
-                  </Button>
+                      onClick={handleCreatePost} 
+                      className="w-full"
+                      variant={newPost.published ? "default" : "secondary"}
+                    >
+                      {newPost.published ? "Publish Post" : "Save as Draft"}
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
