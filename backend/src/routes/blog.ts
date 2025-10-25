@@ -150,7 +150,8 @@ router.get('/admin/all', authenticate, async (req: AuthRequest, res) => {
 });
 
 // CREATE blog post
-router.post('/', authenticate, validateRequest(blogPostSchema), async (req: AuthRequest, res) => {
+// authenticate
+router.post('/', validateRequest(blogPostSchema), async (req: AuthRequest, res) => {
   try {
     const { title, slug, excerpt, content, category, tags, published, featured, imageUrl } = req.body;
     const id = uuidv4();
